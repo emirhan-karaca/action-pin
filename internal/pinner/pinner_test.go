@@ -46,6 +46,66 @@ func TestPinner_ExactSourcePreservation(t *testing.T) {
 	}
 }
 
+func TestPinner_AliasUses(t *testing.T) {
+	const sha = "b4ffde65f46336ab88eb53be808477a3936bae11"
+	const input = "env:\n  ACTION_REF: &checkout actions/checkout@v4\n  OTHER: *checkout\njobs:\n  test:\n    steps:\n      - uses: *checkout # keep first\n      - uses: *checkout # keep second\n"
+	for _, mode := range []string{"check", "resolve", "fix"} {
+		t.Run(mode, func(t *testing.T) {
+			res := &mockResolver{mapping: map[string]string{"actions/checkout@v4": sha}}
+			p := pinner.New(res, pinner.WithResolve(mode == "resolve"))
+			out, findings, err := p.ProcessContent(context.Background(), "ci.yml", []byte(input), mode == "fix")
+			if err != nil || len(findings) != 2 {
+				t.Fatalf("findings=%+v err=%v", findings, err)
+			}
+			for i, finding := range findings {
+				if finding.Line != 7+i || finding.Column != 15 || finding.Action != "actions/checkout@v4" {
+					t.Fatalf("unexpected finding: %+v", finding)
+				}
+				if mode != "check" && finding.ResolvedSHA != sha {
+					t.Fatalf("missing resolved SHA: %+v", finding)
+				}
+			}
+			if mode == "check" && len(res.calls) != 0 {
+				t.Fatalf("offline check resolved aliases: %v", res.calls)
+			}
+			if mode != "fix" {
+				if string(out) != input {
+					t.Fatalf("check changed content: %s", out)
+				}
+				return
+			}
+			var decoded struct {
+				Env  map[string]string `yaml:"env"`
+				Jobs map[string]struct {
+					Steps []struct {
+						Uses string `yaml:"uses"`
+					} `yaml:"steps"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal(out, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Env["ACTION_REF"] != "actions/checkout@v4" || decoded.Env["OTHER"] != "actions/checkout@v4" {
+				t.Fatalf("changed shared anchor: %s", out)
+			}
+			for _, step := range decoded.Jobs["test"].Steps {
+				if step.Uses != "actions/checkout@"+sha {
+					t.Fatalf("alias not pinned: %s", out)
+				}
+			}
+			for _, comment := range []string{"keep first", "keep second"} {
+				if !strings.Contains(string(out), comment) {
+					t.Fatalf("lost comment: %s", out)
+				}
+			}
+			again, findings, err := p.ProcessContent(context.Background(), "ci.yml", out, true)
+			if err != nil || len(findings) != 0 || string(again) != string(out) {
+				t.Fatalf("not idempotent: %s %+v %v", again, findings, err)
+			}
+		})
+	}
+}
+
 func TestPinner_ComplexScalarFallbackPreservesComments(t *testing.T) {
 	const sha = "b4ffde65f46336ab88eb53be808477a3936bae11"
 	p := pinner.New(&mockResolver{mapping: map[string]string{"actions/checkout@v4": sha}})

@@ -95,7 +95,6 @@ type gitRefResponse struct {
 	Object struct {
 		SHA  string `json:"sha"`
 		Type string `json:"type"`
-		URL  string `json:"url"`
 	} `json:"object"`
 }
 
@@ -188,29 +187,45 @@ func (r *GitHubResolver) resolveViaAPI(ctx context.Context, owner, repo, ref str
 				if gitRef.Object.Type == "commit" && action.IsCommitSHA(gitRef.Object.SHA) {
 					return gitRef.Object.SHA, nil
 				}
-				if gitRef.Object.Type == "tag" && gitRef.Object.URL != "" {
-					req3, err := http.NewRequestWithContext(ctx, http.MethodGet, gitRef.Object.URL, nil)
-					if err == nil {
-						r.setHeaders(req3)
-						resp3, err := r.HTTPClient.Do(req3)
-						if err == nil {
-							defer resp3.Body.Close()
-							if resp3.StatusCode == http.StatusOK {
-								var gitTag gitTagResponse
-								if err := json.NewDecoder(resp3.Body).Decode(&gitTag); err == nil {
-									if action.IsCommitSHA(gitTag.Object.SHA) {
-										return gitTag.Object.SHA, nil
-									}
-								}
-							}
-						}
-					}
+				if gitRef.Object.Type == "tag" && action.IsCommitSHA(gitRef.Object.SHA) {
+					return r.peelTag(ctx, owner, repo, gitRef.Object.SHA)
 				}
 			}
 		}
 	}
 
 	return "", fmt.Errorf("API failed to resolve %s/%s@%s", owner, repo, ref)
+}
+
+func (r *GitHubResolver) peelTag(ctx context.Context, owner, repo, sha string) (string, error) {
+	for depth := 0; depth < 10; depth++ {
+		tagURL := fmt.Sprintf("%s/repos/%s/%s/git/tags/%s", r.BaseURL, url.PathEscape(owner), url.PathEscape(repo), sha)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, tagURL, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to create tag request: %w", err)
+		}
+		r.setHeaders(req)
+
+		resp, err := r.HTTPClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to fetch tag: %w", err)
+		}
+		var gitTag gitTagResponse
+		err = json.NewDecoder(resp.Body).Decode(&gitTag)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || err != nil || !action.IsCommitSHA(gitTag.Object.SHA) {
+			return "", fmt.Errorf("invalid tag response for %s", sha)
+		}
+		switch gitTag.Object.Type {
+		case "commit":
+			return gitTag.Object.SHA, nil
+		case "tag":
+			sha = gitTag.Object.SHA
+		default:
+			return "", fmt.Errorf("tag resolves to non-commit object type %q", gitTag.Object.Type)
+		}
+	}
+	return "", fmt.Errorf("tag nesting exceeds limit")
 }
 
 func (r *GitHubResolver) resolveViaGit(ctx context.Context, owner, repo, ref string) (string, error) {

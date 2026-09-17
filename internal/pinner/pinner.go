@@ -133,25 +133,29 @@ func (p *Pinner) traverseAndPin(ctx context.Context, filename string, node *yaml
 				keyNode := n.Content[i]
 				valNode := n.Content[i+1]
 
-				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "uses" && valNode.Kind == yaml.ScalarNode {
-					actRef, err := action.Parse(valNode.Value)
+				refNode := valNode
+				if refNode.Kind == yaml.AliasNode {
+					refNode = refNode.Alias
+				}
+				if keyNode.Kind == yaml.ScalarNode && keyNode.Value == "uses" && refNode != nil && refNode.Kind == yaml.ScalarNode {
+					actRef, err := action.Parse(refNode.Value)
 					if err == nil && !actRef.IsLocal && !actRef.IsDocker && !actRef.IsDynamic && !actRef.IsPinned {
 						finding := Finding{
 							File:   filepath.ToSlash(filename),
 							Line:   valNode.Line,
 							Column: valNode.Column,
-							Action: valNode.Value,
+							Action: refNode.Value,
 							Owner:  actRef.Owner,
 							Repo:   actRef.Repo,
 							Ref:    actRef.Ref,
 						}
 						if fix || p.resolve {
 							if p.resolver == nil {
-								return fmt.Errorf("resolving %s on line %d in %s: no resolver configured", valNode.Value, valNode.Line, filename)
+								return fmt.Errorf("resolving %s on line %d in %s: no resolver configured", refNode.Value, valNode.Line, filename)
 							}
 							sha, err := p.resolver.Resolve(ctx, actRef.Owner, actRef.Repo, actRef.Ref)
 							if err != nil {
-								return fmt.Errorf("resolving %s on line %d in %s: %w", valNode.Value, valNode.Line, filename, err)
+								return fmt.Errorf("resolving %s on line %d in %s: %w", refNode.Value, valNode.Line, filename, err)
 							}
 							finding.ResolvedSHA = sha
 							finding.PinnedAction = actRef.PinnedString(sha)
@@ -160,6 +164,12 @@ func (p *Pinner) traverseAndPin(ctx context.Context, filename string, node *yaml
 
 						if fix {
 							*edits = append(*edits, sourceEdit{node: *valNode, value: finding.PinnedAction, comment: actRef.Comment()})
+							if valNode.Kind == yaml.AliasNode {
+								valNode.Kind = yaml.ScalarNode
+								valNode.Tag = "!!str"
+								valNode.Style = refNode.Style
+								valNode.Alias = nil
+							}
 							valNode.Value = finding.PinnedAction
 							if valNode.LineComment == "" {
 								valNode.LineComment = actRef.Comment()

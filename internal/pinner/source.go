@@ -28,7 +28,7 @@ func applySourceEdits(content []byte, edits []sourceEdit) ([]byte, bool) {
 	})
 	for _, edit := range edits {
 		n := edit.node
-		if n.Line < 1 || n.Line > len(lines) || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 {
+		if n.Kind != yaml.ScalarNode || n.Line < 1 || n.Line > len(lines) || n.Anchor != "" || n.Style&yaml.TaggedStyle != 0 {
 			return nil, false
 		}
 		oldValue, newValue := n.Value, edit.value

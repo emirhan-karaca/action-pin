@@ -234,6 +234,176 @@ func TestResolve_APIAnnotatedTagPeeling(t *testing.T) {
 	}
 }
 
+func TestResolve_APIAnnotatedTagRejectsNonCommitObject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/repos/actions/checkout/commits/v4":
+			http.Error(w, `{"message":"No commit found for SHA: v4"}`, http.StatusUnprocessableEntity)
+		case "/repos/actions/checkout/git/ref/tags/v4":
+			fmt.Fprintf(w, `{
+				"ref": "refs/tags/v4",
+				"object": {
+					"sha": "2222222222222222222222222222222222222222",
+					"type": "tag",
+					"url": "%s/repos/actions/checkout/git/tags/2222222222222222222222222222222222222222"
+				}
+			}`, "http://"+req.Host)
+		case "/repos/actions/checkout/git/tags/2222222222222222222222222222222222222222":
+			fmt.Fprintf(w, `{
+				"sha": "2222222222222222222222222222222222222222",
+				"object": {
+					"sha": "%s",
+					"type": "blob"
+				}
+			}`, dummySha1)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	r := resolver.New(resolver.WithBaseURL(server.URL), resolver.WithGitExec(func(ctx context.Context, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("git unavailable")
+	}))
+	_, err := r.Resolve(context.Background(), "actions", "checkout", "v4")
+	if err == nil {
+		t.Fatal("expected error when tag object does not peel to a commit")
+	}
+}
+
+func TestResolve_APIAnnotatedTagNestedPeeling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/repos/actions/checkout/commits/v5":
+			http.Error(w, `{"message":"No commit found for SHA: v5"}`, http.StatusUnprocessableEntity)
+		case "/repos/actions/checkout/git/ref/tags/v5":
+			fmt.Fprintf(w, `{
+				"ref": "refs/tags/v5",
+				"object": {
+					"sha": "1111111111111111111111111111111111111111",
+					"type": "tag"
+				}
+			}`)
+		case "/repos/actions/checkout/git/tags/1111111111111111111111111111111111111111":
+			fmt.Fprintf(w, `{
+				"sha": "1111111111111111111111111111111111111111",
+				"object": {
+					"sha": "2222222222222222222222222222222222222222",
+					"type": "tag"
+				}
+			}`)
+		case "/repos/actions/checkout/git/tags/2222222222222222222222222222222222222222":
+			fmt.Fprintf(w, `{
+				"sha": "2222222222222222222222222222222222222222",
+				"object": {
+					"sha": "%s",
+					"type": "commit"
+				}
+			}`, dummySha1)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	r := resolver.New(resolver.WithBaseURL(server.URL), resolver.WithGitExec(func(ctx context.Context, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("git unavailable")
+	}))
+	sha, err := r.Resolve(context.Background(), "actions", "checkout", "v5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sha != dummySha1 {
+		t.Errorf("got %s, want %s", sha, dummySha1)
+	}
+}
+
+func TestResolve_APIAnnotatedTagIgnoresResponseObjectURL(t *testing.T) {
+	var attackerCalls int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt32(&attackerCalls, 1)
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"object": {"sha": "%s", "type": "commit"}}`, dummySha1)
+	}))
+	defer attacker.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch req.URL.Path {
+		case "/repos/actions/checkout/commits/v4":
+			http.Error(w, `{"message":"No commit found for SHA: v4"}`, http.StatusUnprocessableEntity)
+		case "/repos/actions/checkout/git/ref/tags/v4":
+			fmt.Fprintf(w, `{
+				"ref": "refs/tags/v4",
+				"object": {
+					"sha": "2222222222222222222222222222222222222222",
+					"type": "tag",
+					"url": "%s/attacker-endpoint"
+				}
+			}`, attacker.URL)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	r := resolver.New(resolver.WithBaseURL(server.URL), resolver.WithToken("secret-token"), resolver.WithGitExec(func(ctx context.Context, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("git unavailable")
+	}))
+	_, err := r.Resolve(context.Background(), "actions", "checkout", "v4")
+	if err == nil {
+		t.Error("expected error when tag cannot be peeled via canonical API base URL")
+	}
+	if atomic.LoadInt32(&attackerCalls) != 0 {
+		t.Errorf("must not follow object URL from response, got %d attacker calls", atomic.LoadInt32(&attackerCalls))
+	}
+}
+
+func TestResolve_APIAnnotatedTagInvalidResponsesFallBack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"tree", fmt.Sprintf(`{"object":{"type":"tree","sha":%q}}`, dummySha1)},
+		{"missing type", fmt.Sprintf(`{"object":{"sha":%q}}`, dummySha1)},
+		{"invalid commit SHA", `{"object":{"type":"commit","sha":"invalid"}}`},
+		{"invalid tag SHA", `{"object":{"type":"tag","sha":"invalid"}}`},
+		{"cycle", fmt.Sprintf(`{"object":{"type":"tag","sha":%q}}`, tagSha)},
+		{"malformed JSON", `{`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var tagCalls int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch req.URL.Path {
+				case "/repos/actions/checkout/git/ref/tags/v4":
+					fmt.Fprintf(w, `{"object":{"type":"tag","sha":%q}}`, tagSha)
+				case "/repos/actions/checkout/git/tags/" + tagSha:
+					if atomic.AddInt32(&tagCalls, 1) > 10 {
+						t.Error("tag peeling exceeded request limit")
+						http.NotFound(w, req)
+						return
+					}
+					fmt.Fprint(w, tc.body)
+				default:
+					http.NotFound(w, req)
+				}
+			}))
+			defer server.Close()
+			gitCalled := false
+			r := resolver.New(resolver.WithBaseURL(server.URL), resolver.WithGitExec(func(ctx context.Context, args ...string) ([]byte, error) {
+				gitCalled = true
+				return []byte(fmt.Sprintf("%s\trefs/tags/v4^{}\n", dummySha2)), nil
+			}))
+			sha, err := r.Resolve(context.Background(), "actions", "checkout", "v4")
+			if err != nil || sha != dummySha2 || !gitCalled {
+				t.Fatalf("got %q, %v, git called %v", sha, err, gitCalled)
+			}
+		})
+	}
+}
+
 func TestResolve_CaseInsensitiveCache(t *testing.T) {
 	var apiCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
