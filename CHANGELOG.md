@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.1.0] - 2026-09-17
+
+### Added
+
+- Scalar aliases such as `uses: *checkout` are now detected in offline checks, resolved checks, and fix/diff mode. Fixes materialize a pinned scalar at each alias occurrence without changing a shared anchor defined outside `uses`.
+- Nested annotated tags are resolved through a bounded API traversal to the underlying commit.
+
+### Fixed
+
+- Annotated-tag API resolution validates object types instead of accepting a tag, tree, or blob SHA as a commit SHA.
+- Tag-object requests are constructed from the configured API base and validated object SHA rather than following response-provided URLs with credentials.
+- Alias findings retain the occurrence's source location, and fixes preserve occurrence comments and remain idempotent. Alias edits fall back to YAML encoding and may normalize formatting.
+
+### Compatibility
+
+- No CLI flag, Action input, or Go module path changes. Continue using the `/v2` module path; install this release with `go install github.com/emirhan-karaca/action-pin/v2/cmd/action-pin@v2.1.0`.
+- Offline checks, `--resolve`, `--diff`, source builds, and checksum-verified release binaries retain their v2 behavior.
+
+### Validation
+
+- Local tests, `go vet ./...`, `go build ./...`, and `go mod verify` passed. The code commit also passed GitHub CI.
+- Local race-detector tests were not run successfully because the Windows environment lacks a C compiler.
+
 ## [2.0.0] - 2026-09-14
 
 ### Breaking changes

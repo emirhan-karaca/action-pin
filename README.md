@@ -56,17 +56,17 @@ Traditional regex-based or naive YAML re-formatters strip comments, reorder dict
 
 ### Installation
 
-Version 2.0.0 introduces offline checks, `--resolve`, and `--diff`. Install that release, or build from a checkout with `go run ./cmd/action-pin --check`.
+Version 2.1.0 adds support for scalar aliases in `uses` fields and improves annotated-tag resolution, while retaining offline checks, `--resolve`, and `--diff`. Install this release, or build from a checkout with `go run ./cmd/action-pin --check`.
 
 #### Pre-built Binaries (Linux, macOS, Windows)
 Download the latest binary for your operating system and architecture from [GitHub Releases](https://github.com/emirhan-karaca/action-pin/releases).
 
 #### Via Go Install
 ```bash
-go install github.com/emirhan-karaca/action-pin/v2/cmd/action-pin@v2.0.0
+go install github.com/emirhan-karaca/action-pin/v2/cmd/action-pin@v2.1.0
 ```
 
-Use the `/v2` module path for Go installs. The v2.0.0 release contains the offline check, `--resolve`, and `--diff` behavior described below.
+Use the `/v2` module path for Go installs. The v2.1.0 release contains the offline check, `--resolve`, and `--diff` behavior described below.
 
 ---
 
@@ -151,7 +151,7 @@ When a directory is targeted, fix mode first reads, parses, resolves, and stages
 
 Integrate `action-pin` directly into your CI pipeline using the composite Action. Since v2.0.0, the default `source` mode builds the selected Action checkout with Go 1.22 or newer. Pinning the Action to a full commit SHA therefore also selects the program source being executed.
 
-The examples use the reviewed source commit that contains the v2.0.0 behavior. Ensure a supported Go toolchain is available on your runner before this step.
+The examples use the reviewed source commit that contains the v2.1.0 behavior. Ensure a supported Go toolchain is available on your runner before this step.
 
 ```yaml
 name: Security & Pinning Check
@@ -173,7 +173,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 [pinned by action-pin]
 
       - name: Verify all actions are pinned
-        uses: emirhan-karaca/action-pin@985eb2f69b6c1f147f630ec16f9b9a16cf62c7c5 # reviewed v2.0.0 source
+        uses: emirhan-karaca/action-pin@6d0436eaf6982de74b13f4fb507965efd9ea5275 # reviewed v2.1.0 source
 ```
 
 The build may need network access to download Go modules on the first run; it uses the checkout's `go.mod` and `go.sum` with `-mod=readonly`. The resulting CLI check itself is offline. The Action ignores any `action-pin` binary already on `PATH` and runs in the caller's working directory, so `dir` remains relative to your repository.
@@ -182,7 +182,7 @@ To preview the changes that pinning would make without writing workflows, enable
 
 ```yaml
 - name: Preview action pins
-  uses: emirhan-karaca/action-pin@985eb2f69b6c1f147f630ec16f9b9a16cf62c7c5 # reviewed v2.0.0 source
+  uses: emirhan-karaca/action-pin@6d0436eaf6982de74b13f4fb507965efd9ea5275 # reviewed v2.1.0 source
   with:
     diff: 'true'
 ```
@@ -193,19 +193,19 @@ To avoid building from source, select an exact release tag and provide the SHA-2
 
 ```yaml
 - name: Verify all actions are pinned
-  uses: emirhan-karaca/action-pin@985eb2f69b6c1f147f630ec16f9b9a16cf62c7c5 # reviewed v2.0.0 source
+  uses: emirhan-karaca/action-pin@6d0436eaf6982de74b13f4fb507965efd9ea5275 # reviewed v2.1.0 source
   with:
-    version: 'v2.0.0'
+    version: 'v2.1.0'
     checksum: 'REPLACE_WITH_64_CHARACTER_ARCHIVE_SHA256'
 ```
 
-Review the v2.0.0 release's `checksums.txt` and copy the matching archive digest into your workflow. A Linux amd64 archive is named `action-pin_2.0.0_linux_amd64.tar.gz`; Windows uses `.zip`. Each runner platform needs its own digest. The Action verifies the download before extraction or execution and fails on a missing or mismatched checksum. `latest` and branch names are rejected.
+Review the v2.1.0 release's `checksums.txt` and copy the matching archive digest into your workflow. A Linux amd64 archive is named `action-pin_2.1.0_linux_amd64.tar.gz`; Windows uses `.zip`. Each runner platform needs its own digest. The Action verifies the download before extraction or execution and fails on a missing or mismatched checksum. `latest` and branch names are rejected.
 
-Release mode runs the selected release's CLI behavior. Version 2.0.0 supports offline checks, `--resolve`, and `--diff`.
+Release mode runs the selected release's CLI behavior. Version 2.1.0 includes scalar-alias support and annotated-tag resolution fixes alongside offline checks, `--resolve`, and `--diff`.
 
 ### Migrating from v1.x
 
-Go installs now use the major-version module path: `github.com/emirhan-karaca/action-pin/v2/cmd/action-pin@v2.0.0`. The v2 Action defaults to a source build, so runners need Go 1.22 or newer. To use a release binary instead, set an exact release tag such as `v2.0.0` and provide the matching platform archive checksum.
+Go installs now use the major-version module path: `github.com/emirhan-karaca/action-pin/v2/cmd/action-pin@v2.1.0`. The v2 Action defaults to a source build, so runners need Go 1.22 or newer. To use a release binary instead, set an exact release tag such as `v2.1.0` and provide the matching platform archive checksum.
 
 The v1.0.x Action used its older `latest` binary-selection behavior and has no source-mode/checksum contract. Its CLI checks resolve references online and it does not support `--resolve` or `--diff`. Keep v1.x workflows on their existing configuration, or migrate them to the v2 inputs above.
 
@@ -218,7 +218,7 @@ The v1.0.x Action used its older `latest` binary-selection behavior and has no s
 | `diff` | `'false'` | Resolve references and print a unified patch without changing files; requires network access |
 | `dir` | `'.github/workflows'` | Directory containing workflow files |
 | `token` | `${{ github.token }}` | GitHub token to avoid API rate limits |
-| `version` | `'source'` | Build the selected Action checkout, or download an exact release tag such as `v2.0.0` |
+| `version` | `'source'` | Build the selected Action checkout, or download an exact release tag such as `v2.1.0` |
 | `checksum` | `''` | Required 64-character SHA-256 of the runner's release archive when `version` is a release tag; leave empty in source mode |
 | `resolve` | `'false'` | Resolve suggested SHAs in check mode; requires network access |
 
@@ -228,7 +228,8 @@ The v1.0.x Action used its older `latest` binary-selection behavior and has no s
 
 ## Edge Cases Handled Out-of-the-Box
 
-- **Annotated Tags vs Lightweight Tags**: Correctly dereferences annotated tag objects (`refs/tags/v1^{}`) to the exact commit SHA.
+- **Annotated Tags vs Lightweight Tags**: Resolves nested annotated tags with a bounded API traversal, validates object types before accepting a commit SHA, and constructs tag requests from the configured API base instead of response-provided URLs. Git fallback remains available when API resolution fails.
+- **Scalar Aliases**: Detects action references in `uses: *alias`. Fix mode replaces the alias occurrence with a pinned scalar without changing a shared anchor defined outside `uses`. Alias edits use YAML encoding, which may normalize formatting.
 - **Repository Subpaths**: Fully supports nested paths like `actions/cache/restore@v3` and `aws-actions/amazon-ecr-login/.github/workflows/shared.yml@v1`.
 - **Local Actions**: Ignores relative paths like `./.github/actions/my-action`.
 - **Docker Actions**: Ignores `docker://` container actions.
